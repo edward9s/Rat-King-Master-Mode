@@ -58,8 +58,8 @@ jobs:
       - name: Patch & Merge
         if: steps.check.outputs.skip == 'false'
         run: |
-          # 1. 針對 Mod 源碼進行 Package 全域替換
-          find mod/core mod/android mod/desktop -type f -name "*.java" -exec sed -i 's/com\.shatteredpixel\.shatteredpixeldungeon/com.zrp200.rkpd2/g' {} +
+          # 1. 針對 Mod 源碼進行 Package 全域替換 (改為掃描整個 mod 目錄)
+          find mod/ -type f -name "*.java" -exec sed -i 's/com\.shatteredpixel\.shatteredpixeldungeon/com.zrp200.rkpd2/g' {} +
           
           # 2. 執行前置修補 (路徑對應 RKA 結構)
           python mod/scripts/patch_android.py
