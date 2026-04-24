@@ -82,6 +82,10 @@ jobs:
           </resources>
           EOF
 
+          # 刪除 RKA 硬編碼的本機金鑰路徑與預設簽署檔，避免 Linux 環境解析崩潰
+          sed -i '/storeFile/d' spd_src/android/build.gradle
+          sed -i '/signingConfig/d' spd_src/android/build.gradle
+
       - name: Compile
         if: steps.check.outputs.skip == 'false'
         working-directory: ./spd_src
