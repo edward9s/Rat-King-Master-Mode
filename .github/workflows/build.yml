@@ -69,6 +69,9 @@ jobs:
 
           # 修正 RKA 缺少 Sheep.initialize 方法造成的編譯中斷
           sed -i 's/((Sheep) mob)\.initialize(8.0f);/\/\/ RKA 相容性移除/g' mod/core/src/main/java/com/spd/mod/journal/ModCellSelector.java
+
+          # RKA 會把 ChampionEnemy.color 套到英雄外觀；Instant Kill 不需要角色染色
+          sed -i 's/color = 0xB06CFF;/color = 0xFFFFFF;/' mod/core/src/main/java/com/spd/mod/mechanics/ModInstantKill.java
           
           # 3. 複製 Mod 檔案至 RKA 原始碼目錄
           cp -a mod/core spd_src/ 2>/dev/null || true
