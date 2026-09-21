@@ -1,0 +1,152 @@
+name: Release RKA Mod
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 20 * * *' # 台灣時間凌晨 4 點 (UTC 20:00)
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Mod Source
+        uses: actions/checkout@v4
+        with:
+          repository: edward9s/Shattered-Master-Mode
+          path: mod
+
+      - name: Resolve Versions
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          REPO="TrashboxBobylev/Rat-King-Adventure"
+          UPSTREAM_TAG=$(gh api repos/$REPO/releases/latest --jq '.tag_name')
+          MOD_VER=$(python mod/scripts/extract_version.py mod/core/src/main/java/com/spd/mod/ModGame.java)
+          EXPECTED_TAG="RKA-${UPSTREAM_TAG}-m${MOD_VER}"
+
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" "https://api.github.com/repos/${{ github.repository }}/releases/tags/$EXPECTED_TAG")
+          if [ "$STATUS" = "200" ]; then
+            if [ "${{ github.event_name }}" = "schedule" ]; then
+              echo "Release $EXPECTED_TAG exists. Skipping scheduled release."
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "::error::Release $EXPECTED_TAG already exists. Wait for an upstream/SMM version change before publishing again."
+            exit 1
+          fi
+
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+          echo "UPSTREAM_TAG=$UPSTREAM_TAG" >> "$GITHUB_ENV"
+          echo "MOD_VER=$MOD_VER" >> "$GITHUB_ENV"
+          echo "EXPECTED_TAG=$EXPECTED_TAG" >> "$GITHUB_ENV"
+          echo "UPSTREAM_REPO=$REPO" >> "$GITHUB_ENV"
+          echo "Resolved $EXPECTED_TAG"
+      - name: Checkout RKA Source
+        uses: actions/checkout@v4
+        if: steps.check.outputs.skip == 'false'
+        with:
+          repository: ${{ env.UPSTREAM_REPO }}
+          ref: ${{ env.UPSTREAM_TAG }}
+          path: spd_src
+
+      - uses: actions/setup-java@v4
+        if: steps.check.outputs.skip == 'false'
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v3
+        if: steps.check.outputs.skip == 'false'
+
+      - name: Patch & Merge
+        if: steps.check.outputs.skip == 'false'
+        run: |
+          # 1. 針對 Mod 源碼進行 Package 全域替換 (改為掃描整個 mod 目錄)
+          find mod/ -type f -name "*.java" -exec sed -i 's/com\.shatteredpixel\.shatteredpixeldungeon/com.zrp200.rkpd2/g' {} +
+          
+          # 2. 執行前置修補 (路徑對應 RKA 結構)
+          python mod/scripts/patch_android.py
+          python mod/scripts/inject_mod.py spd_src/core/src/main/java/com/zrp200/rkpd2/windows/WndGame.java
+
+          # 修正 RKA 缺少 Sheep.initialize 方法造成的編譯中斷
+          sed -i 's/((Sheep) mob)\.initialize(8.0f);/\/\/ RKA 相容性移除/g' mod/core/src/main/java/com/spd/mod/journal/ModCellSelector.java
+
+          # RKA 會把 ChampionEnemy.color 套到英雄外觀；Instant Kill 不需要角色染色
+          sed -i 's/color = 0xB06CFF;/color = 0xFFFFFF;/' mod/core/src/main/java/com/spd/mod/mechanics/ModInstantKill.java
+          
+          # 3. 複製 Mod 檔案至 RKA 原始碼目錄
+          cp -a mod/core spd_src/ 2>/dev/null || true
+          cp -a mod/android spd_src/ 2>/dev/null || true
+          cp -a mod/desktop spd_src/ 2>/dev/null || true
+          cp -a mod/assets spd_src/ 2>/dev/null || true
+          
+          python mod/scripts/patch_depth.py 26
+          
+          # 預防編譯遺失 Google 服務 ID 的報錯
+          mkdir -p spd_src/android/src/main/res/values
+          cat <<EOF > spd_src/android/src/main/res/values/secrets.xml
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <string name="game_services_project_id">000000000000</string>
+          </resources>
+          EOF
+
+          # 將硬編碼路徑與簽名設定註解化，避免破壞大括號結構
+          sed -i 's/storeFile.*/\/\/ storeFile disabled/g' spd_src/android/build.gradle
+          sed -i 's/signingConfig\s\+.*/\/\/ signingConfig disabled/g' spd_src/android/build.gradle
+
+      - name: Compile
+        if: steps.check.outputs.skip == 'false'
+        working-directory: ./spd_src
+        run: |
+          chmod +x ./gradlew
+          ./gradlew android:assembleRelease :desktop:release
+
+      - name: Install Old Build Tools for Signer
+        if: steps.check.outputs.skip == 'false'
+        run: $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "build-tools;29.0.3"
+
+      - name: Sign Android
+        if: steps.check.outputs.skip == 'false'
+        uses: r0adkll/sign-android-release@v1
+        id: sign
+        with:
+          releaseDirectory: spd_src/android/build/outputs/apk/release
+          signingKeyBase64: ${{ secrets.KEYSTORE_BASE64 }}
+          alias: ${{ secrets.KEY_ALIAS }}
+          keyStorePassword: ${{ secrets.STORE_PASSWORD }}
+          keyPassword: ${{ secrets.KEY_PASSWORD }}
+
+      - name: Package
+        if: steps.check.outputs.skip == 'false'
+        run: |
+          mkdir -p out
+          
+          APK_NAME="${{ env.EXPECTED_TAG }}-Android.apk"
+          JAR_NAME="${{ env.EXPECTED_TAG }}-Java.jar"
+          
+          cp "${{ steps.sign.outputs.signedReleaseFile }}" "out/$APK_NAME"
+          
+          COMPILED_JAR=$(find spd_src/desktop/build/libs -name "desktop-*.jar" | head -n 1)
+          if [ -n "$COMPILED_JAR" ]; then
+            cp "$COMPILED_JAR" "out/$JAR_NAME"
+          else
+            echo "Error: Compiled desktop JAR not found"
+            exit 1
+          fi
+
+      - name: Create Release
+        if: steps.check.outputs.skip == 'false'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.EXPECTED_TAG }}
+          name: ${{ env.EXPECTED_TAG }}
+          body: "Automatically built from Rat King Adventure ${{ env.UPSTREAM_TAG }} with Shattered Master Mode m${{ env.MOD_VER }}."
+          files: out/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
