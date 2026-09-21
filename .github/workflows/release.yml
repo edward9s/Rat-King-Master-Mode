@@ -66,12 +66,10 @@ jobs:
       - name: Patch & Merge
         if: steps.check.outputs.skip == 'false'
         run: |
-          # 1. 針對 Mod 源碼進行 Package 全域替換 (改為掃描整個 mod 目錄)
-          find mod/ -type f -name "*.java" -exec sed -i 's/com\.shatteredpixel\.shatteredpixeldungeon/com.zrp200.rkpd2/g' {} +
-          
-          # 2. 執行前置修補 (路徑對應 RKA 結構)
-          python mod/scripts/patch_android.py
-          python mod/scripts/inject_mod.py spd_src/core/src/main/java/com/zrp200/rkpd2/windows/WndGame.java
+          # Detect the target SPD-family package and rebase SMM source consistently.
+          python mod/scripts/rebase_source.py spd_src mod
+          python mod/scripts/patch_android.py spd_src
+          python mod/scripts/inject_mod.py spd_src
 
           # 修正 RKA 缺少 Sheep.initialize 方法造成的編譯中斷
           sed -i 's/((Sheep) mob)\.initialize(8.0f);/\/\/ RKA 相容性移除/g' mod/core/src/main/java/com/spd/mod/journal/ModCellSelector.java
@@ -79,7 +77,7 @@ jobs:
           # RKA 會把 ChampionEnemy.color 套到英雄外觀；Instant Kill 不需要角色染色
           sed -i 's/color = 0xB06CFF;/color = 0xFFFFFF;/' mod/core/src/main/java/com/spd/mod/mechanics/ModInstantKill.java
           
-          # 3. 複製 Mod 檔案至 RKA 原始碼目錄
+          # 複製 Mod 檔案至 RKA 原始碼目錄
           cp -a mod/core spd_src/ 2>/dev/null || true
           cp -a mod/android spd_src/ 2>/dev/null || true
           cp -a mod/desktop spd_src/ 2>/dev/null || true
