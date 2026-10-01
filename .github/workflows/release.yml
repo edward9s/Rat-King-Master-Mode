@@ -3,7 +3,7 @@ name: Release RKA Mod
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 20 * * *' # 台灣時間凌晨 4 點 (UTC 20:00)
+    - cron: '0 6 * * *' # 台灣時間下午兩點 (UTC 06:00)
 
 jobs:
   build:
