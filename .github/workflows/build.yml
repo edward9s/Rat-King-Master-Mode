@@ -22,10 +22,26 @@ jobs:
         run: |
           set -euo pipefail
           REPO="TrashboxBobylev/Rat-King-Adventure"
-          UPSTREAM_TAG=$(gh api "repos/$REPO/releases/latest" --jq '.tag_name // empty')
-          if [ -z "$UPSTREAM_TAG" ]; then
+
+          UPSTREAM_RELEASE_TAG=$(gh api "repos/$REPO/releases/latest" --jq '.tag_name // empty')
+          if [ -z "$UPSTREAM_RELEASE_TAG" ]; then
             echo "::error::Unable to resolve the latest RKA release tag."
             exit 1
+          fi
+
+          SOURCE_REF="$UPSTREAM_RELEASE_TAG"
+          SOURCE_BUILD_GRADLE=$(gh api             -H "Accept: application/vnd.github.raw"             "repos/$REPO/contents/build.gradle?ref=$SOURCE_REF")
+
+          SOURCE_VERSION=$(printf '%s\n' "$SOURCE_BUILD_GRADLE"             | sed -nE "s/^[[:space:]]*appVersionName[[:space:]]*=[[:space:]]*'([^']+)'.*/\1/p"             | head -n 1)
+          SOURCE_VERSION_CODE=$(printf '%s\n' "$SOURCE_BUILD_GRADLE"             | sed -nE 's/^[[:space:]]*appVersionCode[[:space:]]*=[[:space:]]*([0-9]+).*/\1/p'             | head -n 1)
+
+          if [ -z "$SOURCE_VERSION" ] || [ -z "$SOURCE_VERSION_CODE" ]; then
+            echo "::error::Unable to resolve RKA source version from build.gradle at $SOURCE_REF."
+            exit 1
+          fi
+
+          if [ "$SOURCE_VERSION" != "$UPSTREAM_RELEASE_TAG" ]; then
+            echo "::warning::RKA binary release is $UPSTREAM_RELEASE_TAG, but public source at ref $SOURCE_REF declares $SOURCE_VERSION (versionCode $SOURCE_VERSION_CODE). Source build will be published as $SOURCE_VERSION."
           fi
 
           MOD_VER=$(python mod/scripts/extract_version.py mod/core/src/main/java/com/spd/mod/ModGame.java)
@@ -34,17 +50,25 @@ jobs:
             exit 1
           fi
 
-          EXPECTED_TAG="RKA-${UPSTREAM_TAG}-m${MOD_VER}"
-          echo "UPSTREAM_TAG=$UPSTREAM_TAG" >> "$GITHUB_ENV"
+          EXPECTED_TAG="RKA-${SOURCE_VERSION}-m${MOD_VER}"
+
+          echo "UPSTREAM_RELEASE_TAG=$UPSTREAM_RELEASE_TAG" >> "$GITHUB_ENV"
+          echo "SOURCE_REF=$SOURCE_REF" >> "$GITHUB_ENV"
+          echo "SOURCE_VERSION=$SOURCE_VERSION" >> "$GITHUB_ENV"
+          echo "SOURCE_VERSION_CODE=$SOURCE_VERSION_CODE" >> "$GITHUB_ENV"
           echo "MOD_VER=$MOD_VER" >> "$GITHUB_ENV"
           echo "EXPECTED_TAG=$EXPECTED_TAG" >> "$GITHUB_ENV"
           echo "UPSTREAM_REPO=$REPO" >> "$GITHUB_ENV"
-          echo "Resolved $EXPECTED_TAG"
+
+          echo "Resolved source build: $EXPECTED_TAG"
+          echo "Latest RKA binary release: $UPSTREAM_RELEASE_TAG"
+          echo "RKA source: $SOURCE_VERSION (versionCode $SOURCE_VERSION_CODE) from $SOURCE_REF"
+
       - name: Checkout RKA Source
         uses: actions/checkout@v4
         with:
           repository: ${{ env.UPSTREAM_REPO }}
-          ref: ${{ env.UPSTREAM_TAG }}
+          ref: ${{ env.SOURCE_REF }}
           path: spd_src
 
       - uses: actions/setup-java@v4
