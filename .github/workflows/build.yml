@@ -127,7 +127,7 @@ jobs:
       - name: Upload Android APK
         uses: actions/upload-artifact@v4
         with:
-          retention-days: 7
+          retention-days: 3
           name: ${{ env.EXPECTED_TAG }}-Android
           path: out/${{ env.EXPECTED_TAG }}-Android.apk
           if-no-files-found: error
@@ -135,7 +135,7 @@ jobs:
       - name: Upload Java JAR
         uses: actions/upload-artifact@v4
         with:
-          retention-days: 7
+          retention-days: 3
           name: ${{ env.EXPECTED_TAG }}-Java
           path: out/${{ env.EXPECTED_TAG }}-Java.jar
           if-no-files-found: error
